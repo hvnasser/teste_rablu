@@ -146,11 +146,18 @@ async def inspect_site(
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             },
         )
-        # Mascara WebDriver para evitar detecção básica
-        await ctx.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
         page = await ctx.new_page()
+
+        # Aplica stealth patches (navigator.webdriver, plugins, etc.)
+        try:
+            from playwright_stealth import stealth_async
+            await stealth_async(page)
+            print("  [stealth] playwright-stealth aplicado")
+        except ImportError:
+            # Fallback manual se playwright-stealth não estiver instalado
+            await page.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
 
         print(f"\n{'='*60}")
         print(f"  Inspecionando: {site.upper()}")
