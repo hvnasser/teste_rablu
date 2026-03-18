@@ -34,7 +34,7 @@ TEST_URLS: dict[str, str] = {
     "netaporter":   "https://www.net-a-porter.com/en-us/shop/designer/zimmermann?pageSize=48&priceBand=sale",
     "ssense":       "https://www.ssense.com/en-us/women/zimmermann?catId=dress",
     "theoutnet":    "https://www.theoutnet.com/en-us/shop/designer/zimmermann?category=dresses",
-    "zimmermann":   "https://www.zimmermann.com/en-us/collections/dresses",
+    "zimmermann":   "https://www.zimmermann.com/en-ca/collections/dresses",
     "maje":         "https://us.maje.com/en/c/dresses-skirts/dresses",
     "isabelmarant": "https://www.isabelmarant.com/en-us/women/clothing/dresses",
 }
