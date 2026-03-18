@@ -121,7 +121,27 @@ class BaseScraper(ABC):
         except Exception as exc:
             self.logger.warning("First navigation attempt failed (%s), retrying…", exc)
             await asyncio.sleep(3)
-            await self.page.goto(url, wait_until=wait_until, timeout=SCRAPER["timeout_ms"])
+            try:
+                await self.page.goto(url, wait_until=wait_until, timeout=SCRAPER["timeout_ms"])
+            except Exception:
+                pass  # prossegue com o que foi carregado
+
+    async def _goto_via_homepage(self, url: str) -> None:
+        """
+        Navega pela homepage antes da URL de produtos para parecer tráfego orgânico.
+        Reduz a probabilidade de bot detection em sites como Mytheresa e SSENSE.
+        """
+        from urllib.parse import urlparse
+        homepage = "{0.scheme}://{0.netloc}".format(urlparse(url))
+
+        self.logger.debug("Visiting homepage first: %s", homepage)
+        try:
+            await self.page.goto(homepage, wait_until="domcontentloaded", timeout=20000)
+            await asyncio.sleep(random.uniform(1.5, 3.0))
+        except Exception:
+            pass
+
+        await self._goto(url)
 
     async def _random_delay(self) -> None:
         delay = random.uniform(SCRAPER["min_delay_s"], SCRAPER["max_delay_s"])

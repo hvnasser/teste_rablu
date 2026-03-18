@@ -30,7 +30,7 @@ OUTPUT_DIR = Path(tempfile.gettempdir())
 # ---------------------------------------------------------------------------
 TEST_URLS: dict[str, str] = {
     "farfetch":     "https://www.farfetch.com/br/shopping/women/zimmermann/items.aspx?category=135979",
-    "mytheresa":    "https://www.mytheresa.com/en-us/women/clothing/dresses?prefn1=brand&prefv1=Zimmermann",
+    "mytheresa":    "https://www.mytheresa.com/en-us/women/designers/zimmermann/clothing/dresses",
     "netaporter":   "https://www.net-a-porter.com/en-us/shop/designer/zimmermann?pageSize=48&priceBand=sale",
     "ssense":       "https://www.ssense.com/en-us/women/zimmermann?catId=dress",
     "theoutnet":    "https://www.theoutnet.com/en-us/shop/designer/zimmermann?category=dresses",
@@ -127,6 +127,11 @@ async def inspect_site(
 ) -> dict:
     report: dict = {"site": site, "url": url, "card_selector": None, "count": 0, "sample": None, "prices": [], "names": []}
 
+    # Extrai hostname para navegar pela homepage primeiro
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    homepage = f"{parsed.scheme}://{parsed.netloc}"
+
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
         ctx = await browser.new_context(
@@ -136,6 +141,14 @@ async def inspect_site(
             ),
             viewport={"width": 1440, "height": 900},
             locale="en-US",
+            extra_http_headers={
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            },
+        )
+        # Mascara WebDriver para evitar detecção básica
+        await ctx.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
         page = await ctx.new_page()
 
@@ -144,18 +157,44 @@ async def inspect_site(
         print(f"  URL: {url}")
         print(f"{'='*60}")
 
+        # Passo 1: navega pela homepage para parecer tráfego orgânico
+        print(f"  → Carregando homepage ({homepage}) …")
+        try:
+            await page.goto(homepage, wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(2)
+        except Exception:
+            pass
+
+        # Tenta aceitar cookies antes de navegar para a página de produtos
+        for cookie_sel in [
+            "[data-testid='cookie-accept-all']", "#onetrust-accept-btn-handler",
+            ".cookie-accept", "[class*='cookie'] button", "button[id*='accept']",
+        ]:
+            try:
+                el = await page.query_selector(cookie_sel)
+                if el and await el.is_visible():
+                    await el.click()
+                    print(f"  Cookie aceito na homepage via: {cookie_sel}")
+                    await asyncio.sleep(2)
+                    break
+            except Exception:
+                pass
+
+        # Passo 2: navega para a URL de produtos
+        print(f"  → Carregando URL de produtos …")
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
         except Exception as e:
             print(f"  [AVISO] goto: {e}")
-            # Mesmo com timeout, continua — o conteúdo pode já ter sido parcialmente carregado
 
-        # Aguarda lazy-loading
+        # Aguarda lazy-loading com scroll progressivo
         await asyncio.sleep(4)
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
-        await asyncio.sleep(3)
+        await page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.3)")
+        await asyncio.sleep(1)
+        await page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.6)")
+        await asyncio.sleep(2)
 
-        # Tenta aceitar cookies automaticamente
+        # Tenta aceitar cookies novamente na página de produtos
         for cookie_sel in [
             "[data-testid='cookie-accept-all']", "#onetrust-accept-btn-handler",
             ".cookie-accept", "[class*='cookie'] button", "button[id*='accept']",
@@ -170,7 +209,15 @@ async def inspect_site(
             except Exception:
                 pass
 
+        await asyncio.sleep(2)
+
         full_html = await page.content()
+
+        # Detecta página de challenge/bot detection
+        title = await page.title()
+        print(f"  Título da página: {title!r}")
+        if any(kw in full_html.lower() for kw in ["captcha", "challenge", "somethingwrong", "robot", "access denied"]):
+            print("  ⚠️  AVISO: Página parece ser uma challenge/bot detection page!")
 
         if save_html:
             path = OUTPUT_DIR / f"{site}_full.html"

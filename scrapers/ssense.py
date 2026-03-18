@@ -81,7 +81,7 @@ class SSENSEScraper(BaseScraper):
 
         url = f"{self.base_url}/en-us/women/{brand_slug}?catId={cat_id}"
         self.logger.info("GET %s", url)
-        await self._goto(url, wait_until="domcontentloaded")
+        await self._goto_via_homepage(url)
         await self._random_delay()
 
         for sel in _COOKIE_SELECTORS:

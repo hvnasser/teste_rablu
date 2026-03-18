@@ -2,13 +2,12 @@
 Mytheresa scraper wrapper.
 
 URL:
-  /en-us/women/clothing/{category}?prefn1=brand&prefv1={Brand}&sort=sale_desc
+  /en-us/women/designers/{brand_slug}/clothing/{category}
 """
 
 from __future__ import annotations
 
 import logging
-from urllib.parse import quote
 
 from config import BRANDS, SCRAPER
 from scrapers.base import BaseScraper, Product
@@ -16,8 +15,8 @@ from scrapers.base import BaseScraper, Product
 logger = logging.getLogger(__name__)
 
 _CATEGORY_PATHS: dict[str, str] = {
-    "dresses": "women/clothing/dresses",
-    "skirts":  "women/clothing/skirts",
+    "dresses": "dresses",
+    "skirts":  "skirts",
 }
 
 _CARD_CANDIDATES = [
@@ -72,15 +71,12 @@ class MytheresaScraper(BaseScraper):
 
     async def search_products(self, brand: str, category: str) -> list[Product]:
         brand_cfg = BRANDS[brand]
-        brand_slug = brand_cfg["slugs"].get(self.site_key, brand_cfg["display_name"])
-        cat_path = _CATEGORY_PATHS.get(category, "women/clothing")
+        brand_slug = brand_cfg["slugs"].get(self.site_key, brand_cfg["search_terms"][0])
+        cat = _CATEGORY_PATHS.get(category, "dresses")
 
-        url = (
-            f"{self.base_url}/en-us/{cat_path}"
-            f"?prefn1=brand&prefv1={quote(brand_slug)}&sort=sale_desc"
-        )
+        url = f"{self.base_url}/en-us/women/designers/{brand_slug}/clothing/{cat}"
         self.logger.info("GET %s", url)
-        await self._goto(url, wait_until="domcontentloaded")
+        await self._goto_via_homepage(url)
         await self._random_delay()
 
         for sel in _COOKIE_SELECTORS:
