@@ -7,68 +7,63 @@ URL real (fornecida pelo usuário):
 Estrutura:
   /{locale}/shopping/women/{brand_slug}/items.aspx?category={category_id}
 
-IDs de categoria (Farfetch) — confirme via inspect_selectors.py se mudarem:
+IDs de categoria (Farfetch):
   dresses : 135979
   skirts  : 136301
+
+Notas de implementação:
+  - O Farfetch usa Emotion CSS — classes são geradas (ex: ltr-mhoyab) e mudam.
+  - Atributos estáveis: data-testid e data-component.
+  - O elemento <a data-component='ProductCardLink'> contém todo o texto do card
+    no formato:  BRAND \n\n Name \n\n Price \n\n Installment \n\n ...
+    Isso serve como fallback robusto quando seletores internos falham.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 
 from config import BRANDS, SCRAPER
 from scrapers.base import BaseScraper, Product
 
 logger = logging.getLogger(__name__)
 
-# Locale da Farfetch a usar (br = BRL, en-us = USD)
 _LOCALE = "br"
 
-# Mapeamento categoria → ID de categoria Farfetch
 _CATEGORY_IDS: dict[str, str] = {
     "dresses": "135979",
     "skirts":  "136301",
 }
 
-# Candidatos de seletor de card — testados em ordem
 _CARD_CANDIDATES = [
     "[data-testid='productCard']",
-    "li[data-testid='productCard']",
     "[data-component='ProductCard']",
+    "li[data-testid='productCard']",
     "[class*='ProductCard']",
-    "[class*='product-card']",
-    "li[class*='product']",
 ]
 
+# Seletores internos usando data-component (estáveis no Farfetch)
 _NAME_SELECTORS = [
+    "[data-component='ProductCardDescription']",
     "[data-testid='productDescription']",
     "[data-testid='productName']",
-    "[data-testid='productDesigner']",
-    "p[data-testid]",
-    "[class*='productDescription']",
-    "[class*='productName']",
-    "h3",
-    "h2",
+    "[data-component='ProductCardInfo'] p",
+    "[data-component='ProductCardBrand'] + *",   # elemento após a marca
 ]
 
 _PRICE_SELECTORS = [
-    "[data-testid='price-current-price']",
+    "[data-component='Price']",
+    "[data-component='ProductCardPrice']",
     "[data-testid='price']",
-    "[class*='price_current']",
-    "[class*='priceAmount']",
-    "[class*='price-value']",
-    "[class*='Price'] span",
-    "span[class*='price']",
+    "[data-testid='price-current-price']",
+    "[data-component='ProductCardInfo'] [class*='price']",
 ]
 
 _ORIG_PRICE_SELECTORS = [
+    "[data-component='PriceOriginal']",
     "[data-testid='price-original-price']",
     "[data-testid='price-was']",
-    "[class*='price_original']",
-    "[class*='priceStrike']",
-    "[class*='price-strike']",
-    "s[class*='price']",
-    "del[class*='price']",
 ]
 
 _COOKIE_SELECTORS = [
@@ -77,6 +72,29 @@ _COOKIE_SELECTORS = [
     "button[id*='accept']",
     "[class*='cookie'] button",
 ]
+
+
+def _parse_link_text(text: str) -> tuple[str, str]:
+    """
+    Extrai (nome, preço_raw) do texto completo do ProductCardLink.
+
+    Formato esperado (separado por \\n\\n):
+      BRAND NAME
+      Product Name
+      R$ 12.751
+      12 x R$ 1.062,58
+      [desconto opcional]
+    """
+    parts = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
+    # parts[0] = marca (maiúsculo), parts[1] = nome, parts[2] = preço
+    name = parts[1] if len(parts) > 1 else parts[0] if parts else ""
+    price_raw = ""
+    for part in parts[2:]:
+        # pega a primeira parte que parece um preço (contém dígito e símbolo)
+        if re.search(r"[\d]", part) and any(c in part for c in "$€£R"):
+            price_raw = part
+            break
+    return name, price_raw
 
 
 class FarfetchScraper(BaseScraper):
@@ -97,7 +115,6 @@ class FarfetchScraper(BaseScraper):
         await self._goto(url, wait_until="domcontentloaded")
         await self._random_delay()
 
-        # Aceita cookies
         for sel in _COOKIE_SELECTORS:
             try:
                 btn = await self.page.query_selector(sel)
@@ -108,7 +125,6 @@ class FarfetchScraper(BaseScraper):
             except Exception:
                 pass
 
-        # Scroll para ativar lazy-loading
         await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.4)")
         await self._random_delay()
         await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.7)")
@@ -129,14 +145,29 @@ class FarfetchScraper(BaseScraper):
         return products
 
     async def _parse_card(self, card, brand: str, category: str):
+        # --- Link e URL ---
+        link_el = await card.query_selector("a[data-component='ProductCardLink'], a[href]")
+        href = (await link_el.get_attribute("href") or "") if link_el else ""
+        product_url = href if href.startswith("http") else self.base_url + href
+
+        # --- Nome: tenta seletores específicos, depois parseia texto do link ---
         name_text = await self._first_text(card, _NAME_SELECTORS)
+        price_raw = await self._first_text(card, _PRICE_SELECTORS)
+
+        if not name_text or not price_raw:
+            # Fallback: extrai do texto completo do link
+            link_text = (await link_el.inner_text()).strip() if link_el else ""
+            if link_text:
+                fallback_name, fallback_price = _parse_link_text(link_text)
+                if not name_text:
+                    name_text = fallback_name
+                if not price_raw:
+                    price_raw = fallback_price
+
         if not name_text:
             return None
 
-        href = await self._first_attr(card, ["a[href]"], "href")
-        product_url = href if href.startswith("http") else self.base_url + href
-
-        price_raw = await self._first_text(card, _PRICE_SELECTORS)
+        # --- Preço original (se em promoção) ---
         orig_raw = await self._first_text(card, _ORIG_PRICE_SELECTORS)
 
         price = self._parse_price(price_raw)
@@ -146,9 +177,9 @@ class FarfetchScraper(BaseScraper):
         currency = self._detect_currency(price_raw)
         original_price = self._parse_price(orig_raw) if orig_raw else None
 
-        img_url = await self._first_attr(card, ["img"], "src")
-        if not img_url:
-            img_url = await self._first_attr(card, ["img"], "data-src")
+        # --- Imagem ---
+        img_url = await self._first_attr(card, ["img"], "src") or \
+                  await self._first_attr(card, ["img"], "data-src")
 
         return Product(
             name=name_text,

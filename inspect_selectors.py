@@ -46,6 +46,10 @@ CARD_CANDIDATES: list[str] = [
     "[data-testid='product-card']",
     "[data-testid='ProductCard']",
     "[data-testid='product_card']",
+    # data-component (Farfetch / design systems)
+    "[data-component='ProductCard']",
+    "[data-component='ProductTile']",
+    "[data-component='product-card']",
     # aria / role
     "[role='listitem']",
     # classes comuns
@@ -73,6 +77,10 @@ PRICE_CANDIDATES: list[str] = [
     "[data-testid='price-current-price']",
     "[data-testid='current-price']",
     "[data-testid='sale-price']",
+    # data-component (Farfetch)
+    "[data-component='Price']",
+    "[data-component='ProductCardPrice']",
+    "[data-component='PriceSale']",
     # classes
     "[class*='price']",
     "[class*='Price']",
@@ -91,6 +99,10 @@ NAME_CANDIDATES: list[str] = [
     "[data-testid='productDescription']",
     "[data-testid='product-name']",
     "[data-testid='product-title']",
+    # data-component (Farfetch)
+    "[data-component='ProductCardDescription']",
+    "[data-component='ProductCardBrand']",
+    "[data-component='ProductCardInfo'] p",
     "[class*='productName']",
     "[class*='product-name']",
     "[class*='product-title']",
@@ -234,8 +246,10 @@ async def inspect_site(
                 links = await cards[0].query_selector_all("a[href]")
                 for lnk in links[:5]:
                     href = await lnk.get_attribute("href") or ""
-                    txt = (await lnk.inner_text()).strip()[:80]
-                    print(f"  [link] {href!r} → {txt!r}")
+                    txt = (await lnk.inner_text()).strip()
+                    # Mostra texto completo do link — útil para parsear nome/preço
+                    print(f"  [link] href={href!r}")
+                    print(f"         texto={txt!r}")
 
                 # ---- Imagens ----
                 print("\n  --- Imagens encontradas no card ---")
