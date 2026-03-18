@@ -17,6 +17,7 @@ O siteId=kxmyk2 é específico do Zimmermann e foi capturado pelo inspector.
 
 from __future__ import annotations
 
+import html
 import logging
 
 import httpx
@@ -90,33 +91,30 @@ class ZimmermannScraper(BaseScraper):
         if not name:
             return None
 
-        # URL do produto
-        handle = item.get("handle") or item.get("url") or ""
-        if handle.startswith("http"):
-            product_url = handle
-        elif handle:
-            product_url = f"{self.base_url}/en-ca/products/{handle}"
-        else:
-            product_url = self.base_url
+        # URL do produto — campo "url" já é completo (https://...)
+        product_url = item.get("url") or self.base_url
 
-        # Preços — SearchSpring retorna como strings ou números
-        price_raw = str(item.get("price") or item.get("sale_price") or "")
-        orig_raw  = str(item.get("msrp") or item.get("compare_at_price") or item.get("regular_price") or "")
+        # Preços — SearchSpring retorna strings; "msrp" = preço original
+        price_raw = str(item.get("price") or "")
+        orig_raw  = str(item.get("msrp") or "")
 
         price = self._parse_price(price_raw)
         if price is None:
             return None
 
-        # Zimmermann opera em AUD por padrão no site en-ca
-        currency = item.get("currency") or "AUD"
+        # en-ca store usa CAD
+        currency = "CAD"
         original_price = self._parse_price(orig_raw) if orig_raw else None
+        # Só reporta original_price se há desconto real
+        if original_price and original_price <= price:
+            original_price = None
 
-        # Imagem
-        image_url = item.get("thumbnailImageUrl") or item.get("imageUrl") or \
-                    item.get("image") or ""
+        # Imagem — URLs têm &amp; que precisa ser descodificado
+        raw_img = item.get("thumbnailImageUrl") or item.get("imageUrl") or ""
+        image_url = html.unescape(raw_img)
 
         # SKU
-        sku = str(item.get("id") or item.get("sku") or "")
+        sku = str(item.get("sku") or item.get("uid") or "")
 
         return Product(
             name=name,
