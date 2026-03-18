@@ -1,4 +1,8 @@
-"""Zimmermann official site scraper wrapper."""
+"""
+Zimmermann official site scraper wrapper.
+
+URL: /en-us/collections/{category}
+"""
 
 from __future__ import annotations
 
@@ -9,10 +13,56 @@ from scrapers.base import BaseScraper, Product
 
 logger = logging.getLogger(__name__)
 
-_CATEGORY_URLS: dict[str, str] = {
-    "dresses": "/en-us/collections/dresses",
-    "skirts": "/en-us/collections/skirts",
+_CATEGORY_PATHS: dict[str, str] = {
+    "dresses": "dresses",
+    "skirts":  "skirts",
 }
+
+_CARD_CANDIDATES = [
+    ".product-tile",
+    "[class*='product-tile']",
+    "[class*='ProductCard']",
+    "[class*='product-card']",
+    "li[class*='product']",
+    "article[class*='product']",
+]
+
+_NAME_SELECTORS = [
+    ".product-tile__title",
+    ".product-tile__name",
+    "[class*='productTitle']",
+    "[class*='product-title']",
+    "[class*='productName']",
+    "h3[class]",
+    "h2[class]",
+    "p[class*='name']",
+]
+
+_PRICE_SELECTORS = [
+    ".product-tile__price--sale",
+    ".product-tile__price",
+    "[class*='price--sale']",
+    "[class*='salePrice']",
+    "[class*='currentPrice']",
+    "span[class*='price']:not([class*='original'])",
+    "[data-price]",
+]
+
+_ORIG_PRICE_SELECTORS = [
+    ".product-tile__price--original",
+    ".product-tile__price--was",
+    "[class*='price--original']",
+    "[class*='originalPrice']",
+    "s[class*='price']",
+    "del",
+]
+
+_COOKIE_SELECTORS = [
+    ".js-cookie-btn-accept",
+    "#onetrust-accept-btn-handler",
+    "button[id*='accept']",
+    "[class*='cookie'] button",
+]
 
 
 class ZimmermannScraper(BaseScraper):
@@ -21,28 +71,29 @@ class ZimmermannScraper(BaseScraper):
     base_url = "https://www.zimmermann.com"
 
     async def search_products(self, brand: str, category: str) -> list[Product]:
-        # Official site only carries its own brand — brand parameter is ignored
-        cat_path = _CATEGORY_URLS.get(category, "/en-us/collections/all")
-        url = f"{self.base_url}{cat_path}?sort_by=price-ascending"
+        cat = _CATEGORY_PATHS.get(category, "all")
+        url = f"{self.base_url}/en-us/collections/{cat}?sort_by=price-ascending"
 
         self.logger.info("GET %s", url)
-        await self._goto(url)
+        await self._goto(url, wait_until="domcontentloaded")
         await self._random_delay()
 
-        try:
-            btn = await self.page.query_selector(".js-cookie-btn-accept")
-            if btn:
-                await btn.click()
-                await self._random_delay()
-        except Exception:
-            pass
+        for sel in _COOKIE_SELECTORS:
+            try:
+                btn = await self.page.query_selector(sel)
+                if btn and await btn.is_visible():
+                    await btn.click()
+                    await self._random_delay()
+                    break
+            except Exception:
+                pass
 
-        await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
+        await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.5)")
         await self._random_delay()
+
+        _sel, cards = await self._find_cards(_CARD_CANDIDATES)
 
         products: list[Product] = []
-        cards = await self.page.query_selector_all(".product-tile")
-
         for card in cards[: SCRAPER["max_products_per_brand_category"]]:
             try:
                 product = await self._parse_card(card, brand, category)
@@ -55,20 +106,15 @@ class ZimmermannScraper(BaseScraper):
         return products
 
     async def _parse_card(self, card, brand: str, category: str):
-        name_el = await card.query_selector(".product-tile__title")
-        name_text = (await name_el.inner_text()).strip() if name_el else ""
+        name_text = await self._first_text(card, _NAME_SELECTORS)
         if not name_text:
             return None
 
-        link_el = await card.query_selector("a[href]")
-        href = (await link_el.get_attribute("href") or "") if link_el else ""
+        href = await self._first_attr(card, ["a[href]"], "href")
         product_url = href if href.startswith("http") else self.base_url + href
 
-        price_el = await card.query_selector(".product-tile__price--sale, .product-tile__price")
-        orig_el = await card.query_selector(".product-tile__price--original")
-
-        price_raw = (await price_el.inner_text()).strip() if price_el else ""
-        orig_raw = (await orig_el.inner_text()).strip() if orig_el else ""
+        price_raw = await self._first_text(card, _PRICE_SELECTORS)
+        orig_raw = await self._first_text(card, _ORIG_PRICE_SELECTORS)
 
         price = self._parse_price(price_raw)
         if price is None:
@@ -77,14 +123,9 @@ class ZimmermannScraper(BaseScraper):
         currency = self._detect_currency(price_raw)
         original_price = self._parse_price(orig_raw) if orig_raw else None
 
-        img_el = await card.query_selector("img.product-tile__img")
-        image_url = ""
-        if img_el:
-            image_url = (
-                await img_el.get_attribute("src")
-                or await img_el.get_attribute("data-srcset", "").split(" ")[0]
-                or ""
-            )
+        img_url = await self._first_attr(card, ["img"], "src") or \
+                  await self._first_attr(card, ["img"], "data-src") or \
+                  await self._first_attr(card, ["img"], "data-srcset")
 
         return Product(
             name=name_text,
@@ -95,5 +136,5 @@ class ZimmermannScraper(BaseScraper):
             price=price,
             currency=currency,
             original_price=original_price,
-            image_url=image_url,
+            image_url=img_url,
         )

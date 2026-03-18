@@ -176,6 +176,48 @@ class BaseScraper(ABC):
         except ValueError:
             return None
 
+    async def _find_cards(self, candidates: list[str], min_count: int = 2):
+        """
+        Try selectors in order and return elements for the first one that
+        produces at least *min_count* results. Returns (selector, elements).
+        """
+        for sel in candidates:
+            try:
+                els = await self.page.query_selector_all(sel)
+                if len(els) >= min_count:
+                    self.logger.debug("Card selector matched: %r (%d elements)", sel, len(els))
+                    return sel, els
+            except Exception:
+                pass
+        self.logger.warning("No card selector matched from candidates: %s", candidates)
+        return None, []
+
+    async def _first_text(self, root, selectors: list[str]) -> str:
+        """Try multiple selectors on *root*, return first non-empty text."""
+        for sel in selectors:
+            try:
+                el = await root.query_selector(sel)
+                if el:
+                    text = (await el.inner_text()).strip()
+                    if text:
+                        return text
+            except Exception:
+                pass
+        return ""
+
+    async def _first_attr(self, root, selectors: list[str], attr: str) -> str:
+        """Try multiple selectors on *root*, return first non-empty attribute value."""
+        for sel in selectors:
+            try:
+                el = await root.query_selector(sel)
+                if el:
+                    val = (await el.get_attribute(attr) or "").strip()
+                    if val:
+                        return val
+            except Exception:
+                pass
+        return ""
+
     @staticmethod
     def _detect_currency(raw: str) -> str:
         symbols = {"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY", "A$": "AUD"}

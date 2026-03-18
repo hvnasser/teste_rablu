@@ -15,18 +15,40 @@ from __future__ import annotations
 BRANDS: dict[str, dict] = {
     "zimmermann": {
         "display_name": "Zimmermann",
-        "search_terms": ["zimmermann"],          # terms used in multi-brand sites
-        "official_site": "zimmermann",           # key in SITES
+        "search_terms": ["zimmermann"],
+        "official_site": "zimmermann",
+        # Slugs usados em cada multi-brand retailer (URL path ou query param)
+        "slugs": {
+            "farfetch":   "zimmermann",
+            "mytheresa":  "zimmermann",
+            "netaporter": "zimmermann",
+            "ssense":     "zimmermann",
+            "theoutnet":  "zimmermann",
+        },
     },
     "maje": {
         "display_name": "Maje",
         "search_terms": ["maje"],
         "official_site": "maje",
+        "slugs": {
+            "farfetch":   "maje",
+            "mytheresa":  "maje",
+            "netaporter": "maje",
+            "ssense":     "maje",
+            "theoutnet":  "maje",
+        },
     },
     "isabel_marant": {
         "display_name": "Isabel Marant",
         "search_terms": ["isabel marant"],
         "official_site": "isabelmarant",
+        "slugs": {
+            "farfetch":   "isabel-marant",
+            "mytheresa":  "isabel-marant",
+            "netaporter": "isabel-marant",
+            "ssense":     "isabel-marant",
+            "theoutnet":  "isabel-marant",
+        },
     },
 }
 

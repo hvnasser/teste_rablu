@@ -1,4 +1,8 @@
-"""Isabel Marant official site scraper wrapper."""
+"""
+Isabel Marant official site scraper wrapper.
+
+URL: /en-us/women/clothing/{category}
+"""
 
 from __future__ import annotations
 
@@ -9,10 +13,55 @@ from scrapers.base import BaseScraper, Product
 
 logger = logging.getLogger(__name__)
 
-_CATEGORY_URLS: dict[str, str] = {
-    "dresses": "/en-us/women/clothing/dresses",
-    "skirts": "/en-us/women/clothing/skirts",
+_CATEGORY_PATHS: dict[str, str] = {
+    "dresses": "dresses",
+    "skirts":  "skirts",
 }
+
+_CARD_CANDIDATES = [
+    ".product-tile",
+    "[class*='product-tile']",
+    "[class*='ProductCard']",
+    "[class*='product-card']",
+    "li[class*='product']",
+    "article[class*='product']",
+]
+
+_NAME_SELECTORS = [
+    ".product-tile__name",
+    "[class*='productName']",
+    "[class*='ProductName']",
+    "[class*='product-name']",
+    "[class*='priceValue']",
+    "h3[class]",
+    "h2[class]",
+    "p[class*='name']",
+]
+
+_PRICE_SELECTORS = [
+    ".sales .value",
+    "[class*='salePrice']",
+    "[class*='sale-price']",
+    "[class*='priceValue']",
+    "[class*='currentPrice']",
+    "span[class*='price']:not([class*='original']):not([class*='strike'])",
+]
+
+_ORIG_PRICE_SELECTORS = [
+    ".strike-through .value",
+    "[class*='originalPrice']",
+    "[class*='price-original']",
+    "[class*='strike-through']",
+    "del",
+    "s[class]",
+]
+
+_COOKIE_SELECTORS = [
+    "#onetrust-accept-btn-handler",
+    ".cookie-accept",
+    "button[id*='accept']",
+    "[class*='cookie'] button",
+]
 
 
 class IsabelMarantScraper(BaseScraper):
@@ -21,27 +70,29 @@ class IsabelMarantScraper(BaseScraper):
     base_url = "https://www.isabelmarant.com"
 
     async def search_products(self, brand: str, category: str) -> list[Product]:
-        cat_path = _CATEGORY_URLS.get(category, "/en-us/women/clothing")
-        url = f"{self.base_url}{cat_path}?prefn1=isOnSale&prefv1=true"
+        cat = _CATEGORY_PATHS.get(category, "dresses")
+        url = f"{self.base_url}/en-us/women/clothing/{cat}"
 
         self.logger.info("GET %s", url)
-        await self._goto(url)
+        await self._goto(url, wait_until="domcontentloaded")
         await self._random_delay()
 
-        try:
-            btn = await self.page.query_selector("#onetrust-accept-btn-handler, .cookie-accept")
-            if btn:
-                await btn.click()
-                await self._random_delay()
-        except Exception:
-            pass
+        for sel in _COOKIE_SELECTORS:
+            try:
+                btn = await self.page.query_selector(sel)
+                if btn and await btn.is_visible():
+                    await btn.click()
+                    await self._random_delay()
+                    break
+            except Exception:
+                pass
 
-        await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
+        await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight * 0.5)")
         await self._random_delay()
+
+        _sel, cards = await self._find_cards(_CARD_CANDIDATES)
 
         products: list[Product] = []
-        cards = await self.page.query_selector_all(".product-tile, [class*='ProductCard']")
-
         for card in cards[: SCRAPER["max_products_per_brand_category"]]:
             try:
                 product = await self._parse_card(card, brand, category)
@@ -54,20 +105,15 @@ class IsabelMarantScraper(BaseScraper):
         return products
 
     async def _parse_card(self, card, brand: str, category: str):
-        name_el = await card.query_selector(".product-tile__name, [class*='productName']")
-        name_text = (await name_el.inner_text()).strip() if name_el else ""
+        name_text = await self._first_text(card, _NAME_SELECTORS)
         if not name_text:
             return None
 
-        link_el = await card.query_selector("a[href]")
-        href = (await link_el.get_attribute("href") or "") if link_el else ""
+        href = await self._first_attr(card, ["a[href]"], "href")
         product_url = href if href.startswith("http") else self.base_url + href
 
-        price_el = await card.query_selector(".sales .value, [class*='salePrice'], [class*='priceValue']")
-        orig_el = await card.query_selector(".strike-through .value, [class*='originalPrice']")
-
-        price_raw = (await price_el.inner_text()).strip() if price_el else ""
-        orig_raw = (await orig_el.inner_text()).strip() if orig_el else ""
+        price_raw = await self._first_text(card, _PRICE_SELECTORS)
+        orig_raw = await self._first_text(card, _ORIG_PRICE_SELECTORS)
 
         price = self._parse_price(price_raw)
         if price is None:
@@ -76,14 +122,8 @@ class IsabelMarantScraper(BaseScraper):
         currency = self._detect_currency(price_raw)
         original_price = self._parse_price(orig_raw) if orig_raw else None
 
-        img_el = await card.query_selector("img")
-        image_url = ""
-        if img_el:
-            image_url = (
-                await img_el.get_attribute("src")
-                or await img_el.get_attribute("data-src")
-                or ""
-            )
+        img_url = await self._first_attr(card, ["img"], "src") or \
+                  await self._first_attr(card, ["img"], "data-src")
 
         return Product(
             name=name_text,
@@ -94,5 +134,5 @@ class IsabelMarantScraper(BaseScraper):
             price=price,
             currency=currency,
             original_price=original_price,
-            image_url=image_url,
+            image_url=img_url,
         )
