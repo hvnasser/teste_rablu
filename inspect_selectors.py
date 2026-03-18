@@ -124,6 +124,7 @@ async def inspect_site(
     site: str,
     url: str,
     save_html: bool = False,
+    headful: bool = False,
 ) -> dict:
     report: dict = {"site": site, "url": url, "card_selector": None, "count": 0, "sample": None, "prices": [], "names": []}
 
@@ -132,8 +133,11 @@ async def inspect_site(
     parsed = urlparse(url)
     homepage = f"{parsed.scheme}://{parsed.netloc}"
 
+    # Lista de chamadas XHR/fetch que contêm dados de produto
+    api_calls: list[dict] = []
+
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
+        browser = await pw.chromium.launch(headless=not headful)
         ctx = await browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -154,10 +158,30 @@ async def inspect_site(
             await stealth_async(page)
             print("  [stealth] playwright-stealth aplicado")
         except ImportError:
-            # Fallback manual se playwright-stealth não estiver instalado
             await page.add_init_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             )
+
+        # Intercepta chamadas XHR/fetch para encontrar APIs de produto
+        async def on_response(response):
+            try:
+                ctype = response.headers.get("content-type", "")
+                url_r = response.url
+                if "json" in ctype and any(kw in url_r for kw in [
+                    "product", "catalog", "search", "listing", "items",
+                    "api", "graphql", "v1", "v2",
+                ]):
+                    try:
+                        body = await response.json()
+                        # Só registra se parecer lista de produtos
+                        if isinstance(body, (dict, list)):
+                            api_calls.append({"url": url_r, "status": response.status})
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        page.on("response", on_response)
 
         print(f"\n{'='*60}")
         print(f"  Inspecionando: {site.upper()}")
@@ -223,8 +247,20 @@ async def inspect_site(
         # Detecta página de challenge/bot detection
         title = await page.title()
         print(f"  Título da página: {title!r}")
-        if any(kw in full_html.lower() for kw in ["captcha", "challenge", "somethingwrong", "robot", "access denied"]):
+        blocked = any(kw in full_html.lower() for kw in [
+            "captcha", "challenge", "somethingwrong", "robot", "access denied",
+        ])
+        if blocked:
             print("  ⚠️  AVISO: Página parece ser uma challenge/bot detection page!")
+            if not headful:
+                print("  💡 Tente: uv run python inspect_selectors.py --site "
+                      f"{site} --headful --save")
+
+        # Mostra chamadas de API capturadas
+        if api_calls:
+            print(f"\n  --- {len(api_calls)} chamadas de API/JSON capturadas ---")
+            for call in api_calls[:20]:
+                print(f"  [api] {call['status']} {call['url']}")
 
         if save_html:
             path = OUTPUT_DIR / f"{site}_full.html"
@@ -322,14 +358,14 @@ async def inspect_site(
 # CLI
 # ---------------------------------------------------------------------------
 
-async def main(sites: list[str], save_html: bool) -> None:
+async def main(sites: list[str], save_html: bool, headful: bool = False) -> None:
     reports = []
     for site in sites:
         url = TEST_URLS.get(site)
         if not url:
             print(f"Site desconhecido: {site}. Disponíveis: {list(TEST_URLS.keys())}")
             continue
-        r = await inspect_site(site, url, save_html=save_html)
+        r = await inspect_site(site, url, save_html=save_html, headful=headful)
         reports.append(r)
 
     # Resumo final
@@ -353,7 +389,9 @@ if __name__ == "__main__":
     parser.add_argument("--site", nargs="+", default=list(TEST_URLS.keys()),
                         help="Site(s) a inspecionar")
     parser.add_argument("--save", action="store_true",
-                        help="Salva o HTML completo de cada página em /tmp/")
+                        help="Salva o HTML completo de cada página no diretório temp")
+    parser.add_argument("--headful", action="store_true",
+                        help="Abre o browser visível (contorna bot detection mais agressiva)")
     args = parser.parse_args()
 
-    asyncio.run(main(args.site, args.save))
+    asyncio.run(main(args.site, args.save, args.headful))

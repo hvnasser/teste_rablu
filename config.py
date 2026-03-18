@@ -79,6 +79,7 @@ SITES: dict[str, dict] = {
         "scraper": "mytheresa",
         "brands": None,
         "enabled": True,
+        "headless": False,   # Akamai Bot Manager — requer browser visível
     },
     "netaporter": {
         "display_name": "Net-a-Porter",

@@ -57,8 +57,11 @@ async def scrape_site(
     scraper_class = get_scraper_class(site_cfg["scraper"])
     results = []
 
+    # Respeita override por site (ex: headless=False para Mytheresa/Akamai)
+    headless = site_cfg.get("headless", SCRAPER["headless"])
+
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=SCRAPER["headless"])
+        browser = await pw.chromium.launch(headless=headless)
         context = await browser.new_context(
             user_agent=SCRAPER["user_agent"],
             viewport={"width": 1440, "height": 900},
