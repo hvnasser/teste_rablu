@@ -17,9 +17,13 @@ import asyncio
 import json
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 from playwright.async_api import async_playwright
+
+# Diretório de saída compatível com Windows e Unix
+OUTPUT_DIR = Path(tempfile.gettempdir())
 
 # ---------------------------------------------------------------------------
 # Sites e URLs de teste (ajuste conforme necessário)
@@ -129,9 +133,10 @@ async def inspect_site(
         print(f"{'='*60}")
 
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=35000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
         except Exception as e:
             print(f"  [AVISO] goto: {e}")
+            # Mesmo com timeout, continua — o conteúdo pode já ter sido parcialmente carregado
 
         # Aguarda lazy-loading
         await asyncio.sleep(4)
@@ -156,7 +161,7 @@ async def inspect_site(
         full_html = await page.content()
 
         if save_html:
-            path = Path(f"/tmp/{site}_full.html")
+            path = OUTPUT_DIR / f"{site}_full.html"
             path.write_text(full_html, encoding="utf-8")
             print(f"  HTML completo salvo em: {path}")
 
@@ -268,10 +273,11 @@ async def main(sites: list[str], save_html: bool) -> None:
         print(f"  {r['site']:15s} {status}")
 
     # Salva JSON com todos os resultados
-    Path("/tmp/inspect_report.json").write_text(
+    report_path = OUTPUT_DIR / "inspect_report.json"
+    report_path.write_text(
         json.dumps(reports, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    print("\n  Relatório completo salvo em /tmp/inspect_report.json")
+    print(f"\n  Relatório completo salvo em {report_path}")
 
 
 if __name__ == "__main__":
